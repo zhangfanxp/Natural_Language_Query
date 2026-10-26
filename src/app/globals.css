@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f7fb;
+  --foreground: #15223b;
+  --muted: #70809a;
+  --line: #e6ebf2;
+  --navy: #172542;
+  --blue: #4169e1;
+  --mint: #51cdb0;
+}
+
+* { box-sizing: border-box; }
+html { min-height: 100%; background: var(--background); }
+body { min-height: 100vh; margin: 0; background: var(--background); color: var(--foreground); font-family: Arial, Helvetica, sans-serif; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+::selection { background: #dce7ff; color: #193469; }
+.grid-paper { background-image: linear-gradient(rgba(84, 110, 168, .055) 1px, transparent 1px), linear-gradient(90deg, rgba(84, 110, 168, .055) 1px, transparent 1px); background-size: 34px 34px; }
+.scrollbar-slim::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-slim::-webkit-scrollbar-thumb { border-radius: 999px; background: #cbd4e2; }
+.scrollbar-slim::-webkit-scrollbar-track { background: transparent; }
+.soft-shadow { box-shadow: 0 18px 50px rgba(25, 43, 78, .08); }
+.panel-shadow { box-shadow: 0 3px 14px rgba(28, 48, 86, .04); }
+@keyframes float-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+.animate-in { animation: float-in .24s ease-out both; }
+
+.thinking-backdrop {
+  background: rgba(5, 12, 25, .56);
+  -webkit-backdrop-filter: blur(9px);
+  backdrop-filter: blur(9px);
+  animation: thinking-veil-in .24s ease-out both;
+}
+.thinking-card { background: #101c32; animation: thinking-card-in .34s cubic-bezier(.2,.8,.2,1) both; }
+.thinking-orbit { animation: thinking-spin 5s linear infinite; }
+.thinking-orbit-reverse { animation: thinking-spin-reverse 7s linear infinite; }
+.thinking-core { animation: thinking-core-pulse 2.8s ease-in-out infinite; }
+.thinking-sparkle { animation: thinking-sparkle 2.2s ease-in-out infinite; }
+.thinking-glow { animation: thinking-glow 6s ease-in-out infinite alternate; }
+.thinking-glow-delay { animation-delay: -3s; }
+.thinking-progress-track { position: relative; }
+.thinking-progress-bar { background: linear-gradient(90deg, transparent, #7d9bff 35%, #70dfc3 78%, transparent); animation: thinking-progress 2.2s ease-in-out infinite; }
+
+@keyframes thinking-veil-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes thinking-card-in { from { opacity: 0; transform: translateY(12px) scale(.975); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes thinking-spin { to { transform: rotate(360deg); } }
+@keyframes thinking-spin-reverse { to { transform: rotate(-360deg); } }
+@keyframes thinking-core-pulse { 0%, 100% { box-shadow: 0 0 30px rgba(104,151,255,.22); } 50% { box-shadow: 0 0 52px rgba(104,151,255,.42); } }
+@keyframes thinking-sparkle { 0%, 100% { transform: scale(.92) rotate(-6deg); opacity: .82; } 50% { transform: scale(1.08) rotate(6deg); opacity: 1; } }
+@keyframes thinking-glow { from { transform: translate3d(-10px, 8px, 0) scale(.92); opacity: .6; } to { transform: translate3d(16px, -10px, 0) scale(1.08); opacity: 1; } }
+@keyframes thinking-progress { 0% { transform: translateX(-125%); } 100% { transform: translateX(330%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-backdrop, .thinking-card, .thinking-orbit, .thinking-orbit-reverse,
+  .thinking-core, .thinking-sparkle, .thinking-glow, .thinking-progress-bar {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,0 +1,485 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+from datetime import date, datetime, time
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Literal
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
+PROJECTS_DIR = DATA_DIR / "wren-projects"
+WREN_HOME = DATA_DIR / "wren-home"
+SAMPLE_DATABASE_SOURCE = ROOT / "sample-data" / "jaffle_shop.duckdb"
+SAMPLE_DATABASE_COPY = DATA_DIR / "sample-databases" / "jaffle_shop" / "jaffle_shop.duckdb"
+os.environ.setdefault("WREN_HOME", str(WREN_HOME))
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+WREN_HOME.mkdir(parents=True, exist_ok=True)
+os.chmod(DATA_DIR, 0o700)
+os.chmod(PROJECTS_DIR, 0o700)
+os.chmod(WREN_HOME, 0o700)
+
+app = FastAPI(title="Wren System Query Service", version="0.1.0")
+
+
+class ColumnInput(BaseModel):
+    name: str
+    type: str = "varchar"
+    nullable: bool = True
+    primaryKey: bool = False
+    description: str = ""
+    modelName: str = ""
+
+
+class TableInput(BaseModel):
+    name: str
+    modelName: str
+    description: str = ""
+    columns: list[ColumnInput] = Field(default_factory=list)
+    foreignKeys: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProjectInput(BaseModel):
+    id: str
+    name: str
+    dataSource: Literal["mysql", "duckdb"] = "mysql"
+    host: str = ""
+    port: int = 3306
+    database: str
+    username: str = ""
+    password: str = ""
+    databasePath: str = ""
+    tables: list[TableInput] = Field(default_factory=list)
+
+
+class QueryInput(BaseModel):
+    connectionId: str
+    sql: str
+
+
+class ProjectDeleteInput(BaseModel):
+    id: str
+
+
+def quote_yaml(value: Any) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def normalize_type(raw_type: str) -> str:
+    value = raw_type.lower().split("(", 1)[0].strip()
+    if value in {"tinyint", "smallint", "mediumint", "int", "integer", "year"}:
+        return "INTEGER"
+    if value in {"bigint"}:
+        return "BIGINT"
+    if value in {"float", "double", "real"}:
+        return "DOUBLE"
+    if value in {"decimal", "numeric"}:
+        return "DECIMAL"
+    if value in {"date"}:
+        return "DATE"
+    if value in {"datetime", "timestamp"}:
+        return "TIMESTAMP"
+    if value in {"time"}:
+        return "TIME"
+    if value in {"bool", "boolean"}:
+        return "BOOLEAN"
+    if value in {"json"}:
+        return "JSON"
+    if value in {"binary", "varbinary", "blob", "tinyblob", "mediumblob", "longblob"}:
+        return "VARBINARY"
+    return "VARCHAR"
+
+
+def write_profile(project: ProjectInput, profile_name: str) -> None:
+    profile_path = WREN_HOME / "profiles.yml"
+    profiles: dict[str, dict[str, Any]] = {}
+    if profile_path.exists():
+        try:
+            import yaml
+
+            loaded = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+            profiles = loaded.get("profiles", {}) if isinstance(loaded, dict) else {}
+        except Exception:
+            profiles = {}
+    if project.dataSource == "duckdb":
+        database_path = Path(project.databasePath).resolve()
+        profiles[profile_name] = {
+            "datasource": "duckdb",
+            "url": str(database_path.parent),
+            "format": "duckdb",
+        }
+    else:
+        profiles[profile_name] = {
+            "datasource": "mysql",
+            "host": project.host,
+            "port": str(project.port),
+            "database": project.database,
+            "user": project.username,
+            "password": project.password,
+        }
+    lines = ["profiles:"]
+    for name, values in profiles.items():
+        lines.append(f"  {quote_yaml(name)}:")
+        for key, value in values.items():
+            lines.append(f"    {key}: {quote_yaml(value)}")
+    lines.append(f"active: {quote_yaml(profile_name)}")
+    temporary_path = profile_path.with_suffix(".yml.tmp")
+    temporary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(temporary_path, 0o600)
+    os.replace(temporary_path, profile_path)
+
+
+def build_model_metadata(table: TableInput, project: ProjectInput) -> dict[str, Any]:
+    columns: list[dict[str, Any]] = []
+    primary_key = None
+    for column in table.columns:
+        item: dict[str, Any] = {
+            "name": column.name,
+            "type": normalize_type(column.type),
+            "not_null": not column.nullable,
+        }
+        if column.primaryKey:
+            item["is_primary_key"] = True
+            primary_key = primary_key or column.name
+        if column.description:
+            item["properties"] = {"description": column.description}
+        columns.append(item)
+    table_reference = {"schema": project.database, "table": table.name}
+    if project.dataSource == "duckdb":
+        table_reference = {
+            "catalog": Path(project.databasePath).stem,
+            "schema": "main",
+            "table": table.name,
+        }
+    result: dict[str, Any] = {
+        "name": table.modelName,
+        "table_reference": table_reference,
+        "columns": columns,
+        "properties": {"description": table.description} if table.description else {},
+    }
+    if primary_key:
+        result["primary_key"] = primary_key
+    return result
+
+
+def sync_project(project: ProjectInput) -> Path:
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", project.id):
+        raise HTTPException(status_code=400, detail="数据源 ID 格式无效")
+    project_path = PROJECTS_DIR / project.id
+    models_path = project_path / "models"
+    project_path.mkdir(parents=True, exist_ok=True)
+    if models_path.exists():
+        for child in models_path.iterdir():
+            if child.is_dir():
+                for nested in child.iterdir():
+                    nested.unlink(missing_ok=True)
+                child.rmdir()
+    models_path.mkdir(parents=True, exist_ok=True)
+
+    profile_name = f"db_{project.id}"
+    write_profile(project, profile_name)
+    project_yaml = {
+        "schema_version": 5,
+        "name": re.sub(r"[^a-zA-Z0-9_-]+", "_", project.name).strip("_") or f"database_{project.id[:8]}",
+        "version": "1.0",
+        "catalog": "wren",
+        "schema": "public",
+        "data_source": project.dataSource,
+        "profile": profile_name,
+    }
+    (project_path / "wren_project.yml").write_text(json.dumps(project_yaml, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    relationships = []
+    used_relationship_names: set[str] = set()
+    model_by_table = {table.name: table.modelName for table in project.tables}
+    for table in project.tables:
+        for foreign_key in table.foreignKeys:
+            referenced_table = str(foreign_key.get("referencedTable", ""))
+            if referenced_table not in model_by_table:
+                continue
+            source_model = table.modelName
+            target_model = model_by_table[referenced_table]
+            source_columns = foreign_key.get("columns", [])
+            target_columns = foreign_key.get("referencedColumns", [])
+            if not source_columns or len(source_columns) != len(target_columns):
+                continue
+            pieces = [
+                f"{source_model}.{source_column} = {target_model}.{target_column}"
+                for source_column, target_column in zip(source_columns, target_columns)
+            ]
+            relationship_name = re.sub(r"[^a-zA-Z0-9_]+", "_", f"{source_model}_{foreign_key.get('name', 'fk')}_{target_model}").strip("_").lower()
+            if not relationship_name:
+                relationship_name = f"relationship_{len(relationships) + 1}"
+            unique_name = relationship_name
+            suffix = 2
+            while unique_name in used_relationship_names:
+                unique_name = f"{relationship_name}_{suffix}"
+                suffix += 1
+            used_relationship_names.add(unique_name)
+            relationships.append({
+                "name": unique_name,
+                "models": [source_model, target_model],
+                "join_type": "MANY_TO_ONE",
+                "condition": " AND ".join(pieces),
+            })
+    (project_path / "relationships.yml").write_text(json.dumps({"relationships": relationships}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for table in project.tables:
+        model_name = re.sub(r"[^a-zA-Z0-9_-]", "_", table.modelName).strip("_")
+        if not model_name:
+            continue
+        model_directory = models_path / model_name
+        model_directory.mkdir(parents=True, exist_ok=True)
+        metadata = build_model_metadata(table, project)
+        (model_directory / "metadata.yml").write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["WREN_HOME"] = str(WREN_HOME)
+    try:
+        completed = subprocess.run(
+            ["wren", "context", "build"],
+            cwd=project_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail="未安装 Wren AI。请按项目 README 安装 Python 查询服务依赖。") from error
+    except subprocess.TimeoutExpired as error:
+        raise HTTPException(status_code=504, detail="Wren MDL 构建超时") from error
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "Wren 无法构建数据模型").strip()[-2000:]
+        raise HTTPException(status_code=422, detail=f"Wren 数据模型构建失败：{detail}")
+    return project_path
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value).strip("_").lower()
+    return slug if slug and slug[0].isalpha() else f"m_{slug or 'table'}"
+
+
+def discover_sample_tables(database_path: Path) -> list[TableInput]:
+    try:
+        import duckdb
+    except ImportError as error:
+        raise HTTPException(status_code=503, detail="当前 Python 环境未安装 DuckDB，请重新运行安装脚本") from error
+
+    connection = duckdb.connect(str(database_path), read_only=True)
+    try:
+        table_names = [row[0] for row in connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main' AND table_type = 'BASE TABLE' ORDER BY table_name"
+        ).fetchall()]
+        if not table_names:
+            raise HTTPException(status_code=422, detail="Jaffle Shop 测试数据库中没有可读取的数据表")
+
+        table_descriptions = {
+            "customers": "客户汇总表，包含首单、最近订单、订单数和客户生命周期价值。",
+            "orders": "订单汇总表，每行代表一笔订单，包含状态及各支付方式金额和订单总额。",
+            "raw_customers": "原始客户数据，保留客户 ID、名和姓。",
+            "raw_orders": "原始订单数据，包含用户 ID、下单日期和订单状态。",
+            "raw_payments": "原始支付明细，一笔订单可能对应多条支付记录。",
+            "stg_customers": "清洗后的客户基础数据。",
+            "stg_orders": "清洗后的订单基础数据。",
+            "stg_payments": "清洗后的支付明细，金额已转换为小数类型。",
+        }
+        known_relations = {
+            ("orders", "customer_id"): ("customers", "customer_id"),
+            ("stg_orders", "customer_id"): ("stg_customers", "customer_id"),
+            ("raw_orders", "user_id"): ("raw_customers", "id"),
+            ("stg_payments", "order_id"): ("stg_orders", "order_id"),
+            ("raw_payments", "order_id"): ("raw_orders", "id"),
+        }
+        table_column_names: dict[str, set[str]] = {}
+        raw_columns: dict[str, list[tuple[Any, ...]]] = {}
+        for table_name in table_names:
+            safe_table_name = table_name.replace("'", "''")
+            columns = connection.execute(f"PRAGMA table_info('{safe_table_name}')").fetchall()
+            raw_columns[table_name] = columns
+            table_column_names[table_name] = {str(column[1]) for column in columns}
+
+        tables: list[TableInput] = []
+        model_names: set[str] = set()
+        for table_name in table_names:
+            base_name = slugify(table_name)
+            model_name = base_name
+            suffix = 2
+            while model_name in model_names:
+                model_name = f"{base_name}_{suffix}"
+                suffix += 1
+            model_names.add(model_name)
+            columns = []
+            for column in raw_columns[table_name]:
+                _, column_name, data_type, not_null, _default, primary_key = column
+                columns.append(ColumnInput(
+                    name=str(column_name),
+                    type=str(data_type).lower(),
+                    nullable=not bool(not_null),
+                    primaryKey=bool(primary_key),
+                    description="",
+                    modelName=slugify(str(column_name)),
+                ))
+
+            foreign_keys = []
+            for (source_table, source_column), (target_table, target_column) in known_relations.items():
+                if source_table != table_name:
+                    continue
+                if source_column not in table_column_names.get(source_table, set()):
+                    continue
+                if target_table not in table_column_names or target_column not in table_column_names[target_table]:
+                    continue
+                foreign_keys.append({
+                    "name": f"fk_{source_table}_{source_column}_{target_table}",
+                    "columns": [source_column],
+                    "referencedTable": target_table,
+                    "referencedColumns": [target_column],
+                })
+            tables.append(TableInput(
+                name=table_name,
+                modelName=model_name,
+                description=table_descriptions.get(table_name, "Jaffle Shop 示例数据库中的数据表。"),
+                columns=columns,
+                foreignKeys=foreign_keys,
+            ))
+        return tables
+    finally:
+        connection.close()
+
+
+def import_sample_database() -> dict[str, Any]:
+    if not SAMPLE_DATABASE_SOURCE.is_file():
+        raise HTTPException(status_code=404, detail="项目中未找到 Jaffle Shop 测试数据库文件")
+    SAMPLE_DATABASE_COPY.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(SAMPLE_DATABASE_COPY.parent.parent, 0o700)
+    if not SAMPLE_DATABASE_COPY.exists():
+        shutil.copy2(SAMPLE_DATABASE_SOURCE, SAMPLE_DATABASE_COPY)
+        os.chmod(SAMPLE_DATABASE_COPY, 0o600)
+
+    project = ProjectInput(
+        id="sample-jaffle-shop",
+        name="Jaffle Shop 示例数据库",
+        dataSource="duckdb",
+        database="jaffle_shop",
+        databasePath=str(SAMPLE_DATABASE_COPY.resolve()),
+        tables=discover_sample_tables(SAMPLE_DATABASE_COPY),
+    )
+    project_path = sync_project(project)
+    return {
+        "ok": True,
+        "id": project.id,
+        "name": project.name,
+        "dataSource": project.dataSource,
+        "database": project.database,
+        "databasePath": project.databasePath,
+        "tables": [table.model_dump(by_alias=True) for table in project.tables],
+        "project": str(project_path),
+    }
+
+
+def delete_project(project_id: str) -> None:
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", project_id):
+        raise HTTPException(status_code=400, detail="数据源 ID 格式无效")
+    project_path = PROJECTS_DIR / project_id
+    if project_path.exists():
+        shutil.rmtree(project_path)
+    profile_path = WREN_HOME / "profiles.yml"
+    if profile_path.exists():
+        try:
+            import yaml
+
+            loaded = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+            profiles = loaded.get("profiles", {}) if isinstance(loaded, dict) else {}
+            profiles.pop(f"db_{project_id}", None)
+            lines = ["profiles:"]
+            for name, values in profiles.items():
+                lines.append(f"  {quote_yaml(name)}:")
+                for key, value in values.items():
+                    lines.append(f"    {key}: {quote_yaml(value)}")
+            if profiles:
+                lines.append(f"active: {quote_yaml(next(iter(profiles)))}")
+            temporary_path = profile_path.with_suffix(".yml.tmp")
+            temporary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            os.chmod(temporary_path, 0o600)
+            os.replace(temporary_path, profile_path)
+        except Exception as error:
+            raise HTTPException(status_code=500, detail="删除 Wren 连接凭据失败") from error
+
+
+def make_json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): make_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [make_json_safe(item) for item in value]
+    if isinstance(value, (datetime, date, time, Decimal)):
+        return str(value)
+    if isinstance(value, bytes):
+        return value.hex()
+    return value
+
+
+@app.get("/health")
+def health():
+    try:
+        from wren_langchain import WrenToolkit  # noqa: F401
+
+        available = True
+        message = "Wren Python SDK 已就绪"
+    except Exception as error:
+        available = False
+        message = f"Wren Python SDK 尚未就绪：{error.__class__.__name__}"
+    return {"ok": True, "wrenAvailable": available, "message": message}
+
+
+@app.post("/projects/sync")
+def projects_sync(project: ProjectInput):
+    path = sync_project(project)
+    return {"ok": True, "project": str(path), "modelCount": len(project.tables)}
+
+
+@app.post("/projects/import-sample")
+def projects_import_sample():
+    return import_sample_database()
+
+
+@app.post("/projects/delete")
+def projects_delete(request: ProjectDeleteInput):
+    delete_project(request.id)
+    return {"ok": True}
+
+
+@app.post("/query")
+def query(request: QueryInput):
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", request.connectionId):
+        raise HTTPException(status_code=400, detail="数据源 ID 格式无效")
+    sql = request.sql.strip()
+    if not re.match(r"^(select|with)\b", sql, flags=re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="只允许执行 SELECT 查询")
+    if ";" in sql.rstrip("; \n\t"):
+        raise HTTPException(status_code=400, detail="不允许在一次请求中执行多条 SQL")
+    project_path = PROJECTS_DIR / request.connectionId
+    if not (project_path / "target" / "mdl.json").exists():
+        raise HTTPException(status_code=409, detail="此数据源尚未同步 Wren 数据模型，请在设置中重新保存数据库配置")
+    try:
+        from wren_langchain import WrenToolkit
+
+        toolkit = WrenToolkit.from_project(str(project_path))
+        expanded_sql = toolkit.dry_plan(sql)
+        table = toolkit.query(sql)
+        rows = table.to_pylist()
+        return {
+            "rows": make_json_safe(rows),
+            "rowCount": len(rows),
+            "expandedSql": expanded_sql,
+            "truncated": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=f"Wren 查询失败：{error}") from error

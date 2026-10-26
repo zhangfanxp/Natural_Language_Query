@@ -1,0 +1,59 @@
+# Dependencies
+/node_modules/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Next.js output
+/.next/
+/out/
+/build/
+/dist/
+/.vercel/
+/.turbo/
+
+# Local application state and secrets
+/data/
+/user.json
+/wren-projects/
+*.pem
+
+# Python virtual environments and generated files
+/python/.venv/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment files (keep only a safe example file if one is added)
+.env
+.env.*
+!.env.example
+
+# Tests, coverage and logs
+/coverage/
+/htmlcov/
+.coverage
+.coverage.*
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript generated files
+*.tsbuildinfo
+/next-env.d.ts
+
+# macOS and editor files
+.DS_Store
+*.swp
+*.swo
