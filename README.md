@@ -35,7 +35,7 @@ bash scripts/install-mac.sh
 
 `mysql-client` 提供编译 Wren MySQL connector 所需的头文件和客户端库；如果服务器已经安装 MySQL Server，不需要因此再安装一套 Server。
 
-Python 依赖清单将 DuckDB 限定在 `2.0` 以下。Wren 0.16 使用 DuckDB 的 `fetch_arrow_table()` 接口；DuckDB 1.5 已将该接口标记为弃用，2.0 中不再提供。重新安装 Python 依赖可自动切换到兼容版本。
+Python 依赖清单将 DuckDB 限定在 `2.0` 以下。Wren 0.16 使用 DuckDB 的 `fetch_arrow_table()` 接口；DuckDB 1.5 已将该接口标记为弃用，2.0 中不再提供。随项目提供的 Jaffle 测试库使用 DuckDB 1.5 兼容存储格式，避免与查询服务版本不匹配。
 
 脚本会优先选择 Python 3.12、3.13 或 3.11。如果 Mac 上安装了多个 Python 版本，可指定路径：
 
@@ -180,7 +180,7 @@ bash scripts/install-launchd.sh
 
 ### Jaffle Shop 测试数据库
 
-项目包含 `sample-data/jaffle_shop.duckdb`。首次 Setup 时勾选“导入 Jaffle Shop 测试数据库”，或在“系统设置 → 数据源”点击“导入测试数据库”。应用会将数据库复制到被 Git 忽略的 `data/sample-databases/jaffle_shop/`，读取表结构并自动生成 Wren 模型。示例库包含客户、订单、支付等 8 张表；它是用于熟悉流程的演示数据，不代表企业实际业务数据，也不会连接或修改 MySQL。
+项目包含 `sample-data/jaffle_shop.duckdb`。首次 Setup 时勾选“导入 Jaffle Shop 测试数据库”，或在“系统设置 → 数据源”点击“导入测试数据库”。应用会将数据库复制到被 Git 忽略的 `data/sample-databases/jaffle_shop/`，读取表结构并自动生成 Wren 模型。示例库包含客户、订单、支付等 8 张表；它是用于熟悉流程的演示数据，不代表企业实际业务数据，也不会连接或修改 MySQL。升级时，Python 服务会自动将此前随项目提供的 DuckDB 2.0 格式副本替换为兼容版本。
 
 ## 账号管理
 
@@ -231,6 +231,7 @@ npm run user:hash
 ## 故障排查
 
 - **提示 Wren 模型未同步**：确认 Python/Wren 服务已启动；再到“系统设置”重新保存相应数据源，或重新保存该数据源的数据字典。保存流程会自动运行模型构建。成功后项目目录下应有 `target/mdl.json`。
+- **测试数据库报 DuckDB storage version 69 错误**：拉取最新代码并重启 Python/Wren 服务。随项目提供的测试库已调整为 DuckDB 1.5 兼容格式；服务启动时会自动迁移原版测试库副本。
 - **无法连接本机 Wren 服务**：确认 `python/.venv/bin/uvicorn` 正在监听 `127.0.0.1:8765`。生产环境也需要单独启动这个服务。
 - **MySQL 连接成功但无法读取表结构**：检查数据库名、账号权限和 MySQL 网络访问规则；账号需能读取目标业务表和数据库元数据。
 - **LLM 测试超时**：检查 Mac 到 LLM API 的网络、API Base URL、模型名和服务商端点状态。模型托管服务也可能因排队或维护而响应较慢。
