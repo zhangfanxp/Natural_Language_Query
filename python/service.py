@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -240,9 +241,10 @@ def sync_project(project: ProjectInput) -> Path:
 
     env = os.environ.copy()
     env["WREN_HOME"] = str(WREN_HOME)
+    wren_command = Path(sys.executable).with_name("wren")
     try:
         completed = subprocess.run(
-            ["wren", "context", "build"],
+            [str(wren_command), "context", "build"],
             cwd=project_path,
             env=env,
             capture_output=True,
@@ -251,7 +253,7 @@ def sync_project(project: ProjectInput) -> Path:
             check=False,
         )
     except FileNotFoundError as error:
-        raise HTTPException(status_code=503, detail="未安装 Wren AI。请按项目 README 安装 Python 查询服务依赖。") from error
+        raise HTTPException(status_code=503, detail=f"当前 Python 环境中找不到 Wren 命令：{wren_command}。请在项目根目录运行 bash scripts/install-mac.sh。") from error
     except subprocess.TimeoutExpired as error:
         raise HTTPException(status_code=504, detail="Wren MDL 构建超时") from error
     if completed.returncode != 0:

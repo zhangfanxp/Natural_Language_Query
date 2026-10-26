@@ -58,7 +58,7 @@ npm run dev:all
 终端一：
 
 ```bash
-WREN_HOME="$PWD/data/wren-home" python/.venv/bin/uvicorn service:app \
+PATH="$PWD/python/.venv/bin:$PATH" WREN_HOME="$PWD/data/wren-home" python/.venv/bin/uvicorn service:app \
   --app-dir python --host 127.0.0.1 --port 8765
 ```
 
@@ -97,7 +97,7 @@ npm run build
 
 ```bash
 cd /项目所在路径/Wren_System
-WREN_HOME="$PWD/data/wren-home" python/.venv/bin/uvicorn service:app \
+PATH="$PWD/python/.venv/bin:$PATH" WREN_HOME="$PWD/data/wren-home" python/.venv/bin/uvicorn service:app \
   --app-dir python --host 127.0.0.1 --port 8765
 ```
 

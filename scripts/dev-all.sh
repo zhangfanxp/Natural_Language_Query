@@ -10,6 +10,7 @@ if [ ! -x python/.venv/bin/uvicorn ]; then
 fi
 
 export WREN_HOME="$ROOT_DIR/data/wren-home"
+export PATH="$ROOT_DIR/python/.venv/bin:$PATH"
 python/.venv/bin/uvicorn service:app --app-dir python --host 127.0.0.1 --port 8765 &
 WREN_PID=$!
 cleanup() {
