@@ -27,7 +27,7 @@ Python 服务默认只绑定本机回环地址，不需要向局域网客户端�
 Wren 的 MySQL connector 需要编译 `mysqlclient`，所以首次安装时先准备 `pkg-config` 和 MySQL client 开发文件，再运行项目安装脚本：
 
 ```bash
-cd /项目所在路径/Wren_System
+cd /项目所在路径/Natural_Language_Query
 brew install pkg-config mysql-client
 export PKG_CONFIG_PATH="$(brew --prefix mysql-client)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 bash scripts/install-mac.sh
@@ -98,7 +98,7 @@ npm run build
 终端一启动 Python/Wren：
 
 ```bash
-cd /项目所在路径/Wren_System
+cd /项目所在路径/Natural_Language_Query
 PATH="$PWD/python/.venv/bin:$PATH" WREN_HOME="$PWD/data/wren-home" python/.venv/bin/uvicorn service:app \
   --app-dir python --host 127.0.0.1 --port 8765
 ```
@@ -106,7 +106,7 @@ PATH="$PWD/python/.venv/bin:$PATH" WREN_HOME="$PWD/data/wren-home" python/.venv/
 终端二启动 Next.js：
 
 ```bash
-cd /项目所在路径/Wren_System
+cd /项目所在路径/Natural_Language_Query
 npm run start
 ```
 
