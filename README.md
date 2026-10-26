@@ -7,7 +7,7 @@
 - macOS 服务器。
 - Node.js 20.9 或更高版本。
 - Python 3.11–3.13；推荐 Python 3.12。当前 Wren 依赖不支持 Python 3.14。
-- Apple Command Line Tools 和 Homebrew。Wren 的 MySQL connector 需要编译 `mysqlclient`；安装脚本会在需要时通过 Homebrew 安装 `pkg-config` 和 MySQL client 开发库。
+- Apple Command Line Tools 和 Homebrew。首次安装前需要准备 `mysqlclient` 编译依赖，命令见下方“安装”和“首次部署”步骤。
 - MySQL 数据库可从运行本应用的 Mac 访问。建议使用只读账号，并授予读取业务表及读取数据库结构所需的权限。
 - 可访问的 OpenAI Chat Completions 兼容 LLM API，例如阿里云百炼、NVIDIA Build 或其他兼容服务。
 - 安装和运行时需要网络可访问 npm/PyPI、MySQL 主机及配置的 LLM API。
@@ -24,12 +24,16 @@ Python 服务默认只绑定本机回环地址，不需要向局域网客户端�
 
 ## 安装
 
-在项目根目录执行安装脚本。脚本会安装 Node 依赖、创建 Python 虚拟环境、检查 C 编译工具，并安装 Wren 查询依赖。如果缺少 `pkg-config` 或 MySQL client 开发文件，脚本会在 Homebrew 可用时安装对应依赖：
+Wren 的 MySQL connector 需要编译 `mysqlclient`，所以首次安装时先准备 `pkg-config` 和 MySQL client 开发文件，再运行项目安装脚本：
 
 ```bash
 cd /项目所在路径/Wren_System
+brew install pkg-config mysql-client
+export PKG_CONFIG_PATH="$(brew --prefix mysql-client)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 bash scripts/install-mac.sh
 ```
+
+`mysql-client` 提供编译 Wren MySQL connector 所需的头文件和客户端库；如果服务器已经安装 MySQL Server，不需要因此再安装一套 Server。
 
 脚本会优先选择 Python 3.12、3.13 或 3.11。如果 Mac 上安装了多个 Python 版本，可指定路径：
 
@@ -81,6 +85,8 @@ NEXT_ALLOWED_DEV_ORIGINS="203.0.113.10" npm run dev:all
 在项目根目录安装运行依赖并构建生产版本：
 
 ```bash
+brew install pkg-config mysql-client
+export PKG_CONFIG_PATH="$(brew --prefix mysql-client)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 bash scripts/install-mac.sh
 npm run build
 ```
@@ -227,15 +233,6 @@ npm run user:hash
 - **MySQL 连接成功但无法读取表结构**：检查数据库名、账号权限和 MySQL 网络访问规则；账号需能读取目标业务表和数据库元数据。
 - **LLM 测试超时**：检查 Mac 到 LLM API 的网络、API Base URL、模型名和服务商端点状态。模型托管服务也可能因排队或维护而响应较慢。
 - **Python 依赖安装失败**：确认使用 Python 3.11、3.12 或 3.13；推荐使用 Python 3.12 后重新运行安装脚本。
-- **mysqlclient 报 `pkg-config: command not found` 或找不到 `mysqlclient.pc`**：安装 MySQL client 开发依赖后重试。通常不需要额外安装 MySQL Server：
-
-  ```bash
-  brew install pkg-config mysql-client
-  export PKG_CONFIG_PATH="$(brew --prefix mysql-client)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-  bash scripts/install-mac.sh
-  ```
-
-  如果提示缺少编译器，先运行 `xcode-select --install` 安装 Apple Command Line Tools。该依赖由 Wren 的 MySQL connector 引入；Next.js `npm run build` 本身不需要编译 `mysqlclient`。
 
 ## 常用命令
 
