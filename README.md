@@ -35,6 +35,8 @@ bash scripts/install-mac.sh
 
 `mysql-client` 提供编译 Wren MySQL connector 所需的头文件和客户端库；如果服务器已经安装 MySQL Server，不需要因此再安装一套 Server。
 
+Python 依赖清单将 DuckDB 限定在 `2.0` 以下。Wren 0.16 使用 DuckDB 的 `fetch_arrow_table()` 接口；DuckDB 1.5 已将该接口标记为弃用，2.0 中不再提供。重新安装 Python 依赖可自动切换到兼容版本。
+
 脚本会优先选择 Python 3.12、3.13 或 3.11。如果 Mac 上安装了多个 Python 版本，可指定路径：
 
 ```bash
